@@ -1,0 +1,149 @@
+---
+title: "Predicting Workout Quality with Machine Learning"
+author: "Cody Henderson"
+output:
+  html_document:
+    fig_height: 9
+    fig_width: 16
+    highlight: tango
+    keep_md: yes
+    theme: journal
+---
+
+##Backgroud  
+  
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, the goal is to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website [here](http://groupware.les.inf.puc-rio.br/har)  (see the section on the Weight Lifting Exercise Dataset).
+
+****
+  
+##Data  
+  
+First, we extract the training and test data and save them into a "data" directory within the working directory.  We will use the training data to build the models.  The test data will be used to make submissions to Coursera for grading purposes.  
+
+```{r get data, cache=TRUE}
+if(!exists(file.path(getwd(),"data"))) dir.create(file.path(getwd(),"data"))
+download.file("http://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv",
+              destfile=file.path(getwd(),"data","training.csv"))
+download.file("http://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv",
+              destfile=file.path(getwd(),"data","testing.csv"))
+```
+```{r read data}
+raw.training.csv <- read.csv(file.path(getwd(),"data","training.csv"),header=T,na.strings=c(NA,'#DIV/0!'))
+final.test <- read.csv(file.path(getwd(),"data","testing.csv"),header=T)
+```
+
+For the analysis we will need to load the *caret* package.  
+  
+```{r library call, warning=FALSE,message=FALSE}
+library(caret)
+```
+
+To test our models, we will split the training data into new training (75%) and test (25%) sets.  The downloaded test set will be set aside until grading submission.  The goal is to predict the classe variable, which we will transform into a factor variable.  
+  
+```{r train test}
+set.seed(34583)
+inTrain = createDataPartition(raw.training.csv$classe, p = 3/4)[[1]]
+training = raw.training.csv[ inTrain,]
+testing = raw.training.csv[-inTrain,]
+
+training$classe <- factor(training$classe)
+testing$classe <- factor(testing$classe)
+```
+  
+****  
+  
+##Preprocessing Data  
+  
+Before building models, we can first preprocess the data.  We only care about variables that can actually be predictors for the model.  The first 8 variables in the data appear to be descriptive variables and not predictive variables.  Therefore, we can remove them from the data.  
+
+```{r remove first 8 vars}
+training <- training[-c(1:8)]
+testing <- testing[-c(1:8)]
+```
+  
+**Missing Values**  
+Next, we can explore missing variables.  We can see from the table below that variables are either completely missing, almost completely missing, or have no missing values.  Since nearly every row is missing values when ever a variable is missing, we will simply remove these variables from the data.  
+  
+```{r missing vals}
+pct.missing<-as.vector(sapply(training, function(x) sum(is.na(x))/length(x)))
+nonmissingcols <- as.vector(sapply(training, function(x) sum(is.na(x))/length(x))<.5)
+training <- training[,nonmissingcols]
+testing <- testing[,nonmissingcols]
+table(round(pct.missing,2))
+```
+  
+**Correlated Predictors**  
+  
+With missing values removed, we will also check for highly correlated variables.  We will remove half of all variables that have a pairwise correlation of at least 0.8.
+  
+```{r corr}
+M <- abs(cor(training[,-52]))
+high.correlated.vars <- findCorrelation(M,cutoff=.8)
+training <- training[,-high.correlated.vars]
+testing <- testing[,-high.correlated.vars]
+```
+  
+****  
+  
+#Model Building  
+
+**Training Models**  
+Since the classe variable is a non-binary factor, we will train a cart and a random forest model to make our prediction.
+
+```{r train models}
+set.seed(33833)
+fit.cart <- train(classe~.,data=training, method='rpart')
+fit.rf <- train(classe~.,data=training, method='rf')
+```
+  
+**Out of Sample Accuracy**    
+We can then predict the classe on the testing data generated from the original training data.  
+```{r predict}
+pred.cart <- predict(fit.cart,testing)
+pred.rf <- predict(fit.rf,testing)
+```
+  
+The confusion matrix for the CART model produces just 49% accuracy on the test set.  Though the CART model is easy to interpret, 49% is not very good accuracy.
+```{r conf.matrix cart}
+confusionMatrix(pred.cart,testing$classe)
+```
+
+The random forest model on the other hand predicts the test set with 99.04% accuracy.  Therefore, we expect the out of sample error to be less than 1%.  Clearly, the random forest model provides a huge advantage over the CART model.
+```{r conf.matrix rf}
+confusionMatrix(pred.rf,testing$classe)
+```
+
+**Predictor Importance**  
+From the following plot, we can see the important variables in the random forest model.  We can see from the plot that yaw_belt, pitch_forearm, and magnet_dumbell are the most important factors in predicting classe.  
+  
+```{r importance plot}
+png(file.path(getwd(),'importance_plot.png'))
+plot(varImp(fit.rf), main="Random Forest:Predictor Importance")
+dev.off()
+```
+![Figure](./importance_plot.png)  
+  
+****  
+  
+##Test Data
+We can run the final random forest model on the original test data for grading purposes.  The predictions on the test set are saved into individual files in a new "answers" directory.
+
+```{r test}
+answers <- predict(fit.rf,final.test)
+
+if(!exists(file.path(getwd(),"answers"))) dir.create(file.path(getwd(),"answers"))
+
+pml_write_files = function(x){
+  n = length(x)
+  for(i in 1:n){
+    filename = file.path("answers",paste0("problem_id_",i,".txt"))
+    write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+  }
+}
+
+pml_write_files(answers)
+```
+
+
+
+
